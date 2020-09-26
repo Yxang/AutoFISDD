@@ -71,7 +71,7 @@ import math
 if __name__=="__main__":
     # general parameter
     embedding_size = 40
-    l2_v = 0.0
+    l2_v = 1e-4
     learning_rate = 1e-3
     dc = 1.0
     split_epoch = 5

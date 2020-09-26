@@ -1,9 +1,9 @@
-from __future__ import print_function
-
 from abc import abstractmethod
 from itertools import combinations
 import numpy as np
 import tensorflow as tf
+import bisect
+import copy
 
 import __init__
 from tf_utils import row_col_fetch, row_col_expand, batch_kernel_product, \
@@ -40,7 +40,7 @@ def generate_pairs(ranges=range(1, 100), mask=None, order=2):
     for i in range(order):
         res.append([])
     for i, pair in enumerate(list(combinations(ranges, order))):
-        if mask is None or mask[i]==1:
+        if mask is None or mask[i] == 1:
             for j in range(order):
                 res[j].append(pair[j])
     print("generated pairs", len(res[0]))
@@ -49,12 +49,13 @@ def generate_pairs(ranges=range(1, 100), mask=None, order=2):
 class AutoFM(Model):
     def __init__(self, init='xavier', num_inputs=None, input_dim=None, embed_size=None, l2_w=None, l2_v=None,
                  norm=False, real_inputs=None, comb_mask=None, weight_base=0.6, third_prune=False, 
-                 comb_mask_third=None, weight_base_third=0.6, retrain_stage=0):
-        self.l2_w = l2_w
-        self.l2_v = l2_v
-        self.l2_ps = l2_v
+                 comb_mask_third=None, weight_base_third=0.6, retrain_stage=0, prune_threshold=0.5):
+        self.l2_w = l2_w if not retrain_stage else 0.
+        self.l2_v = l2_v if not retrain_stage else 0.
+        self.l2_ps = l2_v if not retrain_stage else 0.
         self.third_prune = third_prune
         self.retrain_stage = retrain_stage
+        self.prune_threshold = prune_threshold
 
         self.inputs, self.labels, self.training = create_placeholder(num_inputs, tf, True)
 
@@ -83,8 +84,8 @@ class AutoFM(Model):
                                                     reuse=tf.AUTO_REUSE, scale=False, center=False, name='prune_BN')
         level_2_matrix *= mask                                          
         if third_prune:
-            self.first, self.second, self.third = generate_pairs(range(self.xps.shape[1]), mask=comb_mask_third, order=3)
-            t_embedding_matrix = tf.transpose(self.xps, perm=[1, 0, 2])
+            self.first, self.second, self.third = generate_pairs(range(self.xv.shape[1]), mask=comb_mask_third, order=3)
+            t_embedding_matrix = tf.transpose(self.xv, perm=[1, 0, 2])
             first_embed = tf.transpose(tf.gather(t_embedding_matrix, self.first), perm=[1, 0, 2])
             second_embed = tf.transpose(tf.gather(t_embedding_matrix, self.second), perm=[1, 0, 2])
             third_embed = tf.transpose(tf.gather(t_embedding_matrix, self.third), perm=[1, 0, 2])
@@ -112,33 +113,93 @@ class AutoFM(Model):
         else:
             self.logits, self.outputs = output([l, fm_out, b, ])
 
+    def pick_feature(self, weights, order, lower_weights=None):
+        assert order >= 2
+        if lower_weights is not None:
+            assert order >= 3
+
+        max_bound, min_bound = max(np.abs(weights)), min(np.abs(weights))
+        weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        if lower_weights is not None:
+            max_bound, min_bound = max(np.abs(lower_weights)), min(np.abs(lower_weights))
+            lower_weights = np.sign(lower_weights) * (np.abs(lower_weights) - min_bound) / (max_bound - min_bound)
+            weights = np.where(np.abs(weights) >= min_bound, weights, 0.)
+            weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        else:
+            max_bound, min_bound = max(np.abs(weights)), min(np.abs(weights))
+            weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        combs = generate_pairs(range(self.xv.shape[1]), mask=None, order=order)
+        combs = list(zip(*combs))
+        if order >= 3:
+            lower_combs = generate_pairs(range(self.xv.shape[1]), mask=None, order=order - 1)
+            lower_combs = list(zip(*lower_combs))
+        mask = np.ones_like(weights, dtype=np.int)
+        pruned = 0
+        for i, (weight, comb) in enumerate(zip(weights, combs)):
+            if np.abs(weight) < self.prune_threshold:
+                mask[i] = 0
+                continue
+            else:
+                if order >= 3:
+                    for i_removed in range(order):
+                        lower_comb = list(comb).copy()
+                        lower_comb.pop(i_removed)
+                        lower_comb = tuple(lower_comb)
+                        id_lower_comb = bisect.bisect_left(lower_combs, lower_comb)
+                        w_lower_comb = lower_weights[id_lower_comb]
+                        if 0.8 * np.abs(weight) < np.abs(w_lower_comb):
+                            mask[i] = 0
+                            pruned += 1
+                            break
+        print(f'''
+#####################
+{pruned}
+#####################        
+''')
+
+        return mask
+
     def analyse_structure(self, sess, print_full_weight=False, epoch=None):
         import numpy as np
-        wts, mask = sess.run(["edge_weight/normed_wts:0", "edge_weight/unpruned_mask:0"])
+        wts = sess.run("edge_weight/normed_wts:0")
+        if not self.retrain_stage:
+            mask = self.pick_feature(wts, order=2)
         if print_full_weight:
             outline = ""
             for j in range(wts.shape[0]):
                 outline += str(wts[j]) + ","
             outline += "\n"
             print("log avg auc all weights for(epoch:%s)" % (epoch), outline)
-        print("wts", wts[:10])
-        print("mask", mask[:10])
-        zeros_ = np.zeros_like(mask, dtype=np.float32)
-        zeros_[mask == 0] = 1
-        print("masked edge_num", sum(zeros_))
-        if self.third_prune:
-            wts, mask = sess.run(["third_edge_weight/third_normed_wts:0", "third_edge_weight/third_unpruned_mask:0"])
-            if print_full_weight:
-                outline = ""
+
+            outline = ""
+            if not self.retrain_stage:
                 for j in range(wts.shape[0]):
-                    outline += str(wts[j]) + ","
+                    outline += str(mask[j]) + ","
                 outline += "\n"
-                print("third log avg auc all third weights for(epoch:%s)" % (epoch), outline)
-            print("third wts", wts[:10])
-            print("third mask", mask[:10])
+                print("log avg auc all masks for(epoch:%s)" % (epoch), outline)
+        print("wts", wts[:10])
+        if not self.retrain_stage:
+            print("mask", mask[:10])
             zeros_ = np.zeros_like(mask, dtype=np.float32)
             zeros_[mask == 0] = 1
-            print("third masked edge_num", sum(zeros_))
+            print("masked edge_num", sum(zeros_))
+        if self.third_prune:
+            wts_3 = sess.run("third_edge_weight/third_normed_wts:0")
+            if not self.retrain_stage:
+                mask = self.pick_feature(wts_3, order=3, lower_weights=wts)
+            if print_full_weight:
+                if not self.retrain_stage:
+                    outline = ""
+                    for j in range(wts_3.shape[0]):
+                        outline += str(mask[j]) + ","
+                    outline += "\n"
+                    print("third log avg auc all third weights for(epoch:%s)" % (epoch), outline)
+            print("third wts", wts_3[:10])
+            if not self.retrain_stage:
+                print("third mask", mask[:10])
+                zeros_ = np.zeros_like(mask, dtype=np.float32)
+                zeros_[mask == 0] = 1
+                print("third masked edge_num", sum(zeros_))
 
     def compile(self, loss=None, optimizer1=None, optimizer2=None, global_step=None, pos_weight=1.0):
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -158,17 +219,8 @@ class AutoFM(Model):
                     all_variable = [v for v in tf.trainable_variables()]
                     self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
                 else:
-                    if self.third_prune:
-                        weight_second_var = list(set(tf.get_collection("edge_weights")))
-                        weight_third_var = list(set(tf.get_collection("third_edge_weights")))
-                        weight_var = weight_second_var + weight_third_var
-                        weight_var = list(set(weight_var))
-                    else:
-                        weight_var = list(set(tf.get_collection("edge_weights")))
                     all_variable = [v for v in tf.trainable_variables()]
-                    other_var = [i for i in all_variable if i not in weight_var]
-                    self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=other_var)
-                    self.optimizer2 = optimizer2.minimize(loss=_loss_, var_list=weight_var)
+                    self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
 
 class AutoDeepFM(Model):
     def __init__(self, init='xavier', num_inputs=None, input_dim=None, embed_size=None, l2_w=None, l2_v=None,
@@ -300,4 +352,3 @@ class AutoDeepFM(Model):
                         weight_var = list(set(tf.get_collection("edge_weights")))
                     other_var = [i for i in all_variable if i not in weight_var]
                     self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=other_var)
-                    self.optimizer2 = optimizer2.minimize(loss=_loss_, var_list=weight_var)

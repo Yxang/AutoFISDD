@@ -1,6 +1,3 @@
-from __future__ import division
-from __future__ import print_function
-
 import datetime
 import os
 import time
@@ -78,9 +75,9 @@ class Trainer:
         else:
             opt1 = optimizer(learning_rate=self.learning_rate, )  # TODO fbh
 
-        if opt2 == 'grda':
-            opt2 = GRDA(learning_rate=self.learning_rate2, c=grda_c, mu=grda_mu)
-        self.model.compile(loss=loss, optimizer1=opt1, optimizer2=opt2,global_step=self.global_step, pos_weight=pos_weight)
+        #if opt2 == 'grda':
+        #    opt2 = GRDA(learning_rate=self.learning_rate2, c=grda_c, mu=grda_mu)
+        self.model.compile(loss=loss, optimizer1=opt1,global_step=self.global_step, pos_weight=pos_weight)
 
         self.session.run(tf.global_variables_initializer())
         self.session.run(tf.local_variables_initializer())
@@ -106,13 +103,13 @@ class Trainer:
                 _, _loss, outputs = self._run(fetches=[self.model.optimizer1, self.model.loss, self.model.outputs],feed_dict=feed_dict)
                 _l2_loss = 0
             else:
-                _, _, _loss, outputs = self._run(fetches=[self.model.optimizer1, self.model.optimizer2, self.model.loss, self.model.outputs],feed_dict=feed_dict)
+                _, _loss, outputs = self._run(fetches=[self.model.optimizer1, self.model.loss, self.model.outputs],feed_dict=feed_dict)
                 _l2_loss = 0
         else:
             if self.retrain_stage:
                 _, _loss, _l2_loss, outputs = self._run(fetches=[self.model.optimizer1, self.model.loss, self.model.l2_loss, self.model.outputs], feed_dict=feed_dict)
             else:
-                _, _, _loss, _l2_loss, outputs = self._run(fetches=[self.model.optimizer1, self.model.optimizer2, self.model.loss, self.model.l2_loss, self.model.outputs], feed_dict=feed_dict)
+                _, _loss, _l2_loss, outputs = self._run(fetches=[self.model.optimizer1, self.model.loss, self.model.l2_loss, self.model.outputs], feed_dict=feed_dict)
         return _loss, _l2_loss, outputs
 
     def _watch(self, X, y, training, watch_list):
