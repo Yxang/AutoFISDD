@@ -49,7 +49,7 @@ def generate_pairs(ranges=range(1, 100), mask=None, order=2):
 class AutoFM(Model):
     def __init__(self, init='xavier', num_inputs=None, input_dim=None, embed_size=None, l2_w=None, l2_v=None,
                  norm=False, real_inputs=None, comb_mask=None, weight_base=0.6, third_prune=False, 
-                 comb_mask_third=None, weight_base_third=0.6, retrain_stage=0, prune_threshold=0.5):
+                 comb_mask_third=None, weight_base_third=0.6, retrain_stage=0, prune_threshold=0.3):
         self.l2_w = l2_w if not retrain_stage else 0.
         self.l2_v = l2_v if not retrain_stage else 0.
         self.l2_ps = l2_v if not retrain_stage else 0.
@@ -81,7 +81,7 @@ class AutoFM(Model):
             mask = tf.identity(normed_wts, name="unpruned_mask")
             mask = tf.expand_dims(mask, axis=0)
         level_2_matrix = tf.layers.batch_normalization(level_2_matrix, axis=-1, training=self.training,
-                                                    reuse=tf.AUTO_REUSE, scale=False, center=False, name='prune_BN')
+                                                    reuse=tf.AUTO_REUSE, scale=True, center=True, name='prune_BN')
         level_2_matrix *= mask                                          
         if third_prune:
             self.first, self.second, self.third = generate_pairs(range(self.xv.shape[1]), mask=comb_mask_third, order=3)
@@ -101,7 +101,7 @@ class AutoFM(Model):
                 third_mask = tf.identity(third_normed_wts, name="third_unpruned_mask")
                 third_mask = tf.expand_dims(third_mask, axis=0)
             level_3_matrix = tf.layers.batch_normalization(level_3_matrix, axis=-1, training=self.training,
-                                                           reuse=tf.AUTO_REUSE, scale=False, center=False,
+                                                           reuse=tf.AUTO_REUSE, scale=True, center=True,
                                                            name="level_3_matrix_BN")
             level_3_matrix *= third_mask
 
