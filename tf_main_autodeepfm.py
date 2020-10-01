@@ -80,6 +80,7 @@ if __name__=="__main__":
     batch_norm = True
     layer_norm = False
     learning_rate = 1e-3
+    prune_threshold = 0.2
     dc = 0.7
     split_epoch = 5
 
@@ -105,7 +106,7 @@ if __name__=="__main__":
                         embed_size=embedding_size, batch_norm=batch_norm, layer_norm=layer_norm,
                         comb_mask=comb_mask, weight_base=weight_base, third_prune=third_prune,
                         weight_base_third=weight_base_third, comb_mask_third=comb_mask_third,
-                        retrain_stage=retrain_stage)
+                        retrain_stage=retrain_stage, prune_threshold=prune_threshold)
     run_one_model(model=model, learning_rate=learning_rate, epsilon=1e-8,
                   decay_rate=dc, ep=split_epoch,grda_c=grda_c, grda_mu=grda_mu, 
                   learning_rate2=learning_rate2,decay_rate2=dc2, retrain_stage=retrain_stage)
