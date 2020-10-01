@@ -209,7 +209,7 @@ class AutoFM(Model):
                 _loss_ = self.loss
                 if self.third_prune:
                     self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.l2_ps],
-                                               [self.xw, self.xv, self.xps])
+                                               [self.xw, self.xv])
                 else:
                     self.l2_loss = get_l2_loss([self.l2_w, self.l2_v],
                                                [self.xw, self.xv])
@@ -388,7 +388,7 @@ class AutoDeepFM(Model):
                 _loss_ = self.loss
                 if self.third_prune:
                     self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.l2_ps, self.layer_l2],
-                                               [self.xw, self.xv, self.xps, self.layer_kernels])
+                                               [self.xw, self.xv, self.layer_kernels])
                 else:
                     self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.layer_l2],
                                                [self.xw, self.xv, self.layer_kernels])
