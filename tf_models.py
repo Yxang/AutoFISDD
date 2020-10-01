@@ -208,7 +208,7 @@ class AutoFM(Model):
                 self.loss = tf.reduce_mean(loss(logits=self.logits, targets=self.labels, pos_weight=pos_weight))
                 _loss_ = self.loss
                 if self.third_prune:
-                    self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.l2_ps],
+                    self.l2_loss = get_l2_loss([self.l2_w, self.l2_v],
                                                [self.xw, self.xv])
                 else:
                     self.l2_loss = get_l2_loss([self.l2_w, self.l2_v],
@@ -387,7 +387,7 @@ class AutoDeepFM(Model):
                 self.loss = tf.reduce_mean(loss(logits=self.logits, targets=self.labels, pos_weight=pos_weight))
                 _loss_ = self.loss
                 if self.third_prune:
-                    self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.l2_ps, self.layer_l2],
+                    self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.layer_l2],
                                                [self.xw, self.xv, self.layer_kernels])
                 else:
                     self.l2_loss = get_l2_loss([self.l2_w, self.l2_v, self.layer_l2],
