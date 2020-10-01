@@ -11,7 +11,7 @@ import tensorflow as tf
 import traceback
 seeds = [0x0123, 0x4567, 0x3210, 0x7654, 0x89AB, 0xCDEF, 0xBA98, 0xFEDC,
              0x0123, 0x4567, 0x3210, 0x7654, 0x89AB, 0xCDEF, 0xBA98, 0xFEDC]
-data_name = 'criteo'
+data_name = 'avazu'
 dataset = as_dataset(data_name)
 backend = 'tf'
 batch_size = 2000
@@ -67,8 +67,8 @@ def run_one_model(model=None,learning_rate=1e-3,decay_rate=1.0,epsilon=1e-8,ep=5
 import math
 if __name__=="__main__":
     # general parameter
-    embedding_size = 40
-    l2_v = 0.0
+    embedding_size = 20
+    l2_v = 1e-5
     depth = 5
     width = 700
     ls = [width] * depth
@@ -93,7 +93,7 @@ if __name__=="__main__":
     comb_mask_third = None
 
     # search_stage or retrain_stage; 0 represents search stage and 1 represents retrain stage
-    retrain_stage = 0  # in retrain stage, optimize all parameters by adam Optimizer, you need to mask interactions by comb_mask and comb_mask_third
+    retrain_stage = 1  # in retrain stage, optimize all parameters by adam Optimizer, you need to mask interactions by comb_mask and comb_mask_third
 
     # grda parameter
     grda_c = 0.0005

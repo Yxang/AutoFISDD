@@ -61,7 +61,7 @@ class AutoFM(Model):
 
         inputs, mask, flag, num_inputs = split_data_mask(self.inputs, num_inputs, norm=norm, real_inputs=real_inputs)
 
-        self.xw, self.xv, b, self.xps = embedding_lookup(init=init, input_dim=input_dim, factor=embed_size, inputs=inputs,
+        self.xw, self.xv, b, _ = embedding_lookup(init=init, input_dim=input_dim, factor=embed_size, inputs=inputs,
                                                apply_mask=flag, mask=mask, third_order=third_prune)
 
         l = linear(self.xw)
@@ -215,28 +215,26 @@ class AutoFM(Model):
                                                [self.xw, self.xv])
                 if self.l2_loss is not None:
                     _loss_ += self.l2_loss
-                if self.retrain_stage:
-                    all_variable = [v for v in tf.trainable_variables()]
-                    self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
-                else:
-                    all_variable = [v for v in tf.trainable_variables()]
-                    self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
+                all_variable = [v for v in tf.trainable_variables()]
+                self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
 
 class AutoDeepFM(Model):
     def __init__(self, init='xavier', num_inputs=None, input_dim=None, embed_size=None, l2_w=None, l2_v=None,
                  layer_sizes=None, layer_acts=None, layer_keeps=None, layer_l2=None, norm=False, real_inputs=None,
                  batch_norm=False, layer_norm=False, comb_mask=None, weight_base=0.6, third_prune=False, 
-                 comb_mask_third=None, weight_base_third=0.6, retrain_stage=0):
-        self.l2_w = l2_w
-        self.l2_v = l2_v
-        self.l2_ps = l2_v
-        self.layer_l2 = layer_l2
+                 comb_mask_third=None, weight_base_third=0.6, retrain_stage=0, prune_threshold=0.3):
+        self.l2_w = l2_w if not retrain_stage else 0.
+        self.l2_v = l2_v if not retrain_stage else 0.
+        self.l2_ps = l2_v if not retrain_stage else 0.
+        self.layer_l2 = layer_l2 if not retrain_stage else 0.
         self.retrain_stage = retrain_stage
+        self.prune_threshold = prune_threshold
+
         self.inputs, self.labels, self.training = create_placeholder(num_inputs, tf, True)
         layer_keeps = drop_out(self.training, layer_keeps)
         inputs, mask, flag, num_inputs = split_data_mask(self.inputs, num_inputs, norm=norm, real_inputs=real_inputs)
 
-        self.xw, xv, _, self.xps = embedding_lookup(init=init, input_dim=input_dim, factor=embed_size, inputs=inputs,
+        self.xw, xv, _, _ = embedding_lookup(init=init, input_dim=input_dim, factor=embed_size, inputs=inputs,
                                             apply_mask=flag, mask=mask, use_b=False, third_order=third_prune)
         self.third_prune = third_prune
         self.xv = xv
@@ -262,11 +260,11 @@ class AutoDeepFM(Model):
             mask = tf.identity(normed_wts, name="unpruned_mask")
             mask = tf.expand_dims(mask, axis=0)
         level_2_matrix = tf.layers.batch_normalization(level_2_matrix, axis=-1, training=self.training,
-                                                    reuse=tf.AUTO_REUSE, scale=False, center=False, name='prune_BN')
+                                                    reuse=tf.AUTO_REUSE, scale=True, center=True, name='prune_BN')
         level_2_matrix *= mask                                          
         if third_prune:
-            self.first, self.second, self.third = generate_pairs(range(self.xps.shape[1]), mask=comb_mask_third, order=3)
-            t_embedding_matrix = tf.transpose(self.xps, perm=[1, 0, 2])
+            self.first, self.second, self.third = generate_pairs(range(self.xv.shape[1]), mask=comb_mask_third, order=3)
+            t_embedding_matrix = tf.transpose(self.xv, perm=[1, 0, 2])
             first_embed = tf.transpose(tf.gather(t_embedding_matrix, self.first), perm=[1, 0, 2])
             second_embed = tf.transpose(tf.gather(t_embedding_matrix, self.second), perm=[1, 0, 2])
             third_embed = tf.transpose(tf.gather(t_embedding_matrix, self.third), perm=[1, 0, 2])
@@ -282,7 +280,7 @@ class AutoDeepFM(Model):
                 third_mask = tf.identity(third_normed_wts, name="third_unpruned_mask")
                 third_mask = tf.expand_dims(third_mask, axis=0)
             level_3_matrix = tf.layers.batch_normalization(level_3_matrix, axis=-1, training=self.training,
-                                                           reuse=tf.AUTO_REUSE, scale=False, center=False,
+                                                           reuse=tf.AUTO_REUSE, scale=True, center=True,
                                                            name="level_3_matrix_BN")
             level_3_matrix *= third_mask
 
@@ -296,31 +294,91 @@ class AutoDeepFM(Model):
 
     def analyse_structure(self, sess, print_full_weight=False, epoch=None):
         import numpy as np
-        wts, mask = sess.run(["edge_weight/normed_wts:0", "edge_weight/unpruned_mask:0"])
+        wts = sess.run("edge_weight/normed_wts:0")
+        if not self.retrain_stage:
+            mask = self.pick_feature(wts, order=2)
         if print_full_weight:
             outline = ""
             for j in range(wts.shape[0]):
                 outline += str(wts[j]) + ","
             outline += "\n"
             print("log avg auc all weights for(epoch:%s)" % (epoch), outline)
-        print("wts", wts[:10])
-        print("mask", mask[:10])
-        zeros_ = np.zeros_like(mask, dtype=np.float32)
-        zeros_[mask == 0] = 1
-        print("masked edge_num", sum(zeros_))
-        if self.third_prune:
-            wts, mask = sess.run(["third_edge_weight/third_normed_wts:0", "third_edge_weight/third_unpruned_mask:0"])
-            if print_full_weight:
-                outline = ""
+
+            outline = ""
+            if not self.retrain_stage:
                 for j in range(wts.shape[0]):
-                    outline += str(wts[j]) + ","
+                    outline += str(mask[j]) + ","
                 outline += "\n"
-                print("third log avg auc all third weights for(epoch:%s)" % (epoch), outline)
-            print("third wts", wts[:10])
-            print("third mask", mask[:10])
+                print("log avg auc all masks for(epoch:%s)" % (epoch), outline)
+        print("wts", wts[:10])
+        if not self.retrain_stage:
+            print("mask", mask[:10])
             zeros_ = np.zeros_like(mask, dtype=np.float32)
             zeros_[mask == 0] = 1
-            print("third masked edge_num", sum(zeros_))
+            print("masked edge_num", sum(zeros_))
+        if self.third_prune:
+            wts_3 = sess.run("third_edge_weight/third_normed_wts:0")
+            if not self.retrain_stage:
+                mask = self.pick_feature(wts_3, order=3, lower_weights=wts)
+            if print_full_weight:
+                if not self.retrain_stage:
+                    outline = ""
+                    for j in range(wts_3.shape[0]):
+                        outline += str(mask[j]) + ","
+                    outline += "\n"
+                    print("third log avg auc all third weights for(epoch:%s)" % (epoch), outline)
+            print("third wts", wts_3[:10])
+            if not self.retrain_stage:
+                print("third mask", mask[:10])
+                zeros_ = np.zeros_like(mask, dtype=np.float32)
+                zeros_[mask == 0] = 1
+                print("third masked edge_num", sum(zeros_))
+
+    def pick_feature(self, weights, order, lower_weights=None):
+        assert order >= 2
+        if lower_weights is not None:
+            assert order >= 3
+
+        max_bound, min_bound = max(np.abs(weights)), min(np.abs(weights))
+        weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        if lower_weights is not None:
+            max_bound, min_bound = max(np.abs(lower_weights)), min(np.abs(lower_weights))
+            lower_weights = np.sign(lower_weights) * (np.abs(lower_weights) - min_bound) / (max_bound - min_bound)
+            weights = np.where(np.abs(weights) >= min_bound, weights, 0.)
+            weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        else:
+            max_bound, min_bound = max(np.abs(weights)), min(np.abs(weights))
+            weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        combs = generate_pairs(range(self.xv.shape[1]), mask=None, order=order)
+        combs = list(zip(*combs))
+        if order >= 3:
+            lower_combs = generate_pairs(range(self.xv.shape[1]), mask=None, order=order - 1)
+            lower_combs = list(zip(*lower_combs))
+        mask = np.ones_like(weights, dtype=np.int)
+        pruned = 0
+        for i, (weight, comb) in enumerate(zip(weights, combs)):
+            if np.abs(weight) < self.prune_threshold:
+                mask[i] = 0
+                continue
+            else:
+                if order >= 3:
+                    for i_removed in range(order):
+                        lower_comb = list(comb).copy()
+                        lower_comb.pop(i_removed)
+                        lower_comb = tuple(lower_comb)
+                        id_lower_comb = bisect.bisect_left(lower_combs, lower_comb)
+                        w_lower_comb = lower_weights[id_lower_comb]
+                        if 0.8 * np.abs(weight) < np.abs(w_lower_comb):
+                            mask[i] = 0
+                            pruned += 1
+                            break
+        print(f'''
+#####################
+{pruned}
+#####################        
+''')
+
+        return mask
 
     def compile(self, loss=None, optimizer1=None, optimizer2=None, global_step=None, pos_weight=1.0):
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -336,19 +394,5 @@ class AutoDeepFM(Model):
                                                [self.xw, self.xv, self.layer_kernels])
                 if self.l2_loss is not None:
                     _loss_ += self.l2_loss
-                if self.retrain_stage:
-                    all_variable = [v for v in tf.trainable_variables()]
-                    self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
-                else:
-                    all_variable = [v for v in tf.trainable_variables()]
-                    if self.third_prune:
-                        print("optimizer")
-                        weight_second_var = list(set(tf.get_collection("edge_weights")))
-                        weight_third_var = list(set(tf.get_collection("third_edge_weights")))
-                        weight_var = weight_second_var + weight_third_var
-                        weight_var = list(set(weight_var))
-                        # weight_var = list(set(tf.get_collection("third_edge_weights")))
-                    else:
-                        weight_var = list(set(tf.get_collection("edge_weights")))
-                    other_var = [i for i in all_variable if i not in weight_var]
-                    self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=other_var)
+                all_variable = [v for v in tf.trainable_variables()]
+                self.optimizer1 = optimizer1.minimize(loss=_loss_, var_list=all_variable)
