@@ -118,16 +118,15 @@ class AutoFM(Model):
         if lower_weights is not None:
             assert order >= 3
 
-        max_bound, min_bound = max(np.abs(weights)), min(np.abs(weights))
-        weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+        max_bound = np.max(np.abs(weights))
+        weights = np.sign(weights) * np.abs(weights) / max_bound
         if lower_weights is not None:
-            max_bound, min_bound = max(np.abs(lower_weights)), min(np.abs(lower_weights))
-            lower_weights = np.sign(lower_weights) * (np.abs(lower_weights) - min_bound) / (max_bound - min_bound)
-            weights = np.where(np.abs(weights) >= min_bound, weights, 0.)
-            weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+            max_bound = np.max(np.abs(lower_weights))
+            lower_weights = np.sign(lower_weights) * np.abs(lower_weights) / max_bound
+            weights = np.sign(weights) * np.abs(weights) / max_bound
         else:
-            max_bound, min_bound = max(np.abs(weights)), min(np.abs(weights))
-            weights = np.sign(weights) * (np.abs(weights) - min_bound) / (max_bound - min_bound)
+            max_bound = np.max(np.abs(weights))
+            weights = np.sign(weights) * np.abs(weights) / max_bound
         combs = generate_pairs(range(self.xv.shape[1]), mask=None, order=order)
         combs = list(zip(*combs))
         if order >= 3:
